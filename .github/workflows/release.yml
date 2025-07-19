@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Select Xcode
+      run: |
+        # List available Xcode versions
+        ls /Applications | grep Xcode
+        # Use the latest Xcode
+        sudo xcode-select -s /Applications/Xcode_16.2.app
+        swift --version
+    
+    - name: Build Universal Binary
+      run: |
+        swift build -c release --arch x86_64
+        swift build -c release --arch arm64
+        lipo -create -output relay \
+          .build/x86_64-apple-macosx/release/relay \
+          .build/arm64-apple-macosx/release/relay
+        chmod +x relay
+        tar -czf relay-macos.tar.gz relay
+    
+    - name: Generate SHA256 checksum
+      run: |
+        shasum -a 256 relay-macos.tar.gz > checksum.txt
+    
+    - name: Create Release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create ${{ github.ref_name }} \
+          --title "Release ${{ github.ref_name }}" \
+          --notes "## Installation
+        
+        ### macOS (Universal Binary - works on both Intel and Apple silicon)
+        \`\`\`bash
+        curl -L https://github.com/ambientcontext/relay/releases/download/${{ github.ref_name }}/relay-macos.tar.gz | tar xz
+        sudo mv relay /usr/local/bin/
+        # Remove quarantine attribute to bypass Gatekeeper
+        sudo xattr -d com.apple.quarantine /usr/local/bin/relay
+        \`\`\`
+        
+        ### Verify checksum
+        \`\`\`bash
+        curl -L https://github.com/ambientcontext/relay/releases/download/${{ github.ref_name }}/checksum.txt
+        shasum -a 256 relay-macos.tar.gz
+        \`\`\`" \
+          relay-macos.tar.gz \
+          checksum.txt
